@@ -1,0 +1,52 @@
+---
+title: "__Lab Week 1__"
+author: "**Rosa Fallahpour**"
+output:
+  pdf_document: default
+  html_document: default
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+```
+## __(1)__     
+following displays the plot for the ratio of male to female mortality rates over time for ages 10,20,30 and 40.
+
+```{r echo=FALSE}
+library(tidyverse)
+dm <- read_table("https://www.prdh.umontreal.ca/BDLC/data/ont/Mx_1x1.txt", skip = 2, col_types = "dcddd")
+attach(dm)
+dm1 <- dm |> mutate(mf_ratio = Male/Female) |> filter(Age==10|Age==20|Age==30|Age==40) |> select(Year, Age, mf_ratio)
+attach(dm1)
+p1 <- dm1 |> ggplot(aes(x = Year, y = mf_ratio, color = Age)) + geom_line()+ labs(y = "M/F mortality rate")+ theme_bw()
+p1
+```
+
+## __(2)__  
+The ages that have the highest female mortality rate each year are shown below:
+
+```{r echo=FALSE}
+dm2 <- dm |> group_by(Year) |> filter(Female == max(Female, na.rm = T)) %>% select(Year, Age)
+dm2
+```
+## __(3)__ 
+The standard deviations of mortality rates by age for the Male, Female and Total populations are as following:
+
+```{r echo=FALSE}
+summarize_sd <- dm |> group_by(Age) |> summarize(across(Female:Total, sd, na.rm=TRUE))
+summarize_sd
+```
+
+## __(4)__ 
+Following represents the population weighted average mortality rate for males and females, for every year:
+
+```{r echo=FALSE}
+dps <- read_table("https://www.prdh.umontreal.ca/BDLC/data/ont/Population.txt", skip = 2, col_types = "dcddd")
+colnames(dps)[3:5] <- c("Fpop","Mpop","Tpop")
+combdata <- dm |> left_join(dps, by=c("Year","Age"))
+combdata1 <- combdata |> mutate(FDeath= Female*Fpop, MDeath=Male*Mpop) |> group_by(Year) |> summarise(Weighted_average_Female=sum(FDeath,na.rm = TRUE)/sum(Fpop), Weighted_average_Male=sum(MDeath,na.rm = TRUE)/sum(Mpop))
+comb2 <- combdata1 |> pivot_longer(Weighted_average_Female:Weighted_average_Male, names_to="sex", values_to="mortality")
+p4 <- comb2 |> ggplot(aes(x=Year, y=mortality, color = sex))+geom_line()+labs(title = "Average Mortality Rate from 1921 to 2020 in Ontario",y = "Mortality Rate")
+p4
+```
+
+As the plot displays the average mortality rate for both females and males is decreasing from 1921 to around 2005, while it is increasing after that. It also shows that the males mortality rate is always higher than females. 
