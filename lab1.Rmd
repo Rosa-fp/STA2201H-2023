@@ -9,7 +9,7 @@ output:
 knitr::opts_chunk$set(warning = FALSE, message = FALSE)
 ```
 ## __(1)__     
-following displays the plot for the ratio of male to female mortality rates over time for ages 10,20,30 and 40.
+Following displays the plot for the ratio of male to female mortality rates over time for ages 10,20,30 and 40.
 
 ```{r echo=FALSE}
 library(tidyverse)
