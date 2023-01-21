@@ -1,0 +1,122 @@
+---
+title: "__Lab Week 2__"
+author: "**Rosa Fallahpour**"
+output:
+  pdf_document: default
+  html_document: default
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+```
+* __(1)__ The following plots represent the five stations with the highest mean delays and faceting by variable `line` ,respectively:
+```{r echo=TRUE}
+library(opendatatoronto)
+library(tidyverse)
+library(stringr)
+library(skimr)
+library(visdat) 
+library(janitor)
+library(lubridate)
+library(ggrepel)
+res <- list_package_resources("996cfe8d-fb35-40ce-b569-698d51fc683b")
+res <- res |> mutate(year = str_extract(name, "2022"))
+delay_2022_ids <- res |> filter(year==2022) |> select(id) |> pull()
+delay_2022 <- get_resource(delay_2022_ids)
+delay_2022 <- clean_names(delay_2022)
+delay_2022 <- delay_2022 |> filter(line %in% c("BD", "YU", "SHP", "SRT"))
+
+delay_2022 |> group_by(station) |> summarise(mean_delay= mean(min_delay)) |> arrange(desc(mean_delay)) |> slice(1:5)|> ggplot(aes(x= station, y= mean_delay))+ geom_col(fill="orange")+coord_flip()
+```
+
+```{r echo=FALSE}
+d2 <- delay_2022|> group_by(line,station) |> summarise(mean_delay= mean(min_delay)) |> arrange(-mean_delay) |> slice(1:5)
+p2 <- d2 |> ggplot(aes(x= station,y= mean_delay)) + geom_col(fill="orange")+facet_wrap(vars(line), scales="free_y")+labs(y="Mean delay", x="Station")+coord_flip()
+p2
+```
+
+* __(2)__ 
+Downloading the data on mayoral campaign contributions for 2014:
+```{r}
+all_data <- list_packages(limit = 500)
+search_res <- all_data %>% filter(str_detect(title, fixed("campaign", ignore_case = T)))
+res <- list_package_resources("f6651a40-2f52-46fc-9e04-b760c16edd5c")
+may2014 <- get_resource("5b230e92-0a22-4a15-9572-0b19cc222985")$`2_Mayor_Contributions_2014_election.xls`
+head(may2014)
+```
+
+* __(3)__
+Cleaning up the data format:
+```{r}
+mayoral2014 <- may2014 %>% row_to_names(1) %>% clean_names()
+head(mayoral2014)
+```
+
+* __(4)__
+Below displays the table of variables summary. We have large numbers of missing values in some variables such as 	contributors_address, goods_or_service_desc, relationship_to_candidate, president_business_manager, authorized_representative and ward. Depending on our purpose of data exploration, we can perform an analysis which excludes these variables. Therefore, we should not be worried about them. The contribution_amount variable is in character format which we change it to numeric by creating new variable called "cont_amount".
+```{r}
+skim(mayoral2014)
+```
+
+```{r}
+mayoral2014 <- mayoral2014 %>% mutate(cont_amount = as.numeric(contribution_amount))
+```
+* __(5)__ The distribution of contribution amount in log scale is as below. We also created the boxplot to better realize the outliers. As we can see, contributions greater than 10000 (in log scale) are outliers. The similar characteristic in these outliers is that they have been contributed by candidates themselves as shown below.
+```{r}
+#creating histogram for contribution amount in log
+mayoral2014 %>% ggplot(aes(x=cont_amount, y=..density..)) +geom_histogram(position="dodge",fill="orange")+labs(x="Contribution amount (log)",y="")+scale_x_log10()
+```
+
+```{r}
+#creating boxplot for contribution amount to better look for outliers
+mayoral2014 %>% ggplot(aes(y = cont_amount)) +geom_boxplot(outlier.colour = "red")+labs(x="",y="Contribution amount (log)")+scale_y_log10()
+```
+
+```{r}
+mayo1 <- mayoral2014 |> filter(cont_amount > 10000) |> select(cont_amount, relationship_to_candidate)
+mayo1 
+```
+
+After removing the ouliers, we will have the following distribution for the contribution amounts:
+```{r}
+mayo2 <- mayoral2014 |> filter(cont_amount <10000) 
+mayo2 |> ggplot(aes(x=cont_amount))+geom_histogram(fill="Orange")+labs(x="Contribution amount (log)",y="")+scale_x_log10()
+```
+
+* __(6)__ Top five candidates in total contributions:
+```{r}
+mayoral2014  |> group_by(candidate) |> summarise(total=sum(cont_amount)) |> arrange(desc(total)) |> slice(1:5)
+```
+Top five candidates in mean contribution:
+```{r}
+mayoral2014  |> group_by(candidate) |> summarise(mean=mean(cont_amount)) |> arrange(desc(mean)) |> slice(1:5)
+```
+Top five candidates in number of contributions:
+```{r}
+mayoral2014  |> group_by(candidate) |> summarise(cand_number=n()) |> arrange(-cand_number) |> slice(1:5)
+```
+
+* __(7)__ Removing contributions from the candidates themselves we will have the following results:
+```{r}
+mayo2014_no_cand <- mayoral2014 |> filter(contributors_name!= candidate)
+```
+Top five candidates in total contributions:
+```{r}
+mayo2014_no_cand  |> group_by(candidate) |> summarise(total=sum(cont_amount)) |> arrange(desc(total)) |> slice(1:5)
+```
+Top five candidates in mean contribution:
+```{r}
+mayo2014_no_cand  |> group_by(candidate) |> summarise(mean=mean(cont_amount)) |> arrange(desc(mean)) |> slice(1:5)
+```
+Top five candidates in number of contributions:
+```{r}
+mayo2014_no_cand  |> group_by(candidate) |> summarise(cand_number=n()) |> arrange(-cand_number) |> slice(1:5)
+```
+
+* __(8)__ 184 contributors gave money to more than one candidate.
+```{r}
+mayoral2014 |> group_by(contributors_name) |> distinct(contributors_name, candidate) |> summarise(num_cand=n()) |> filter(num_cand >1) |> nrow()
+```
+
+
+
+
