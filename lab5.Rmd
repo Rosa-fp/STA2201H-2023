@@ -1,0 +1,290 @@
+---
+title: "__Lab Week 5__"
+author: "**Rosa Fallahpour**"
+output:
+  pdf_document: default
+  html_document: default
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+```
+
+# Question 1 
+Three following graphs represent the kid's test score with respect to mom's IQ, mom's age and whether or not the mother completed high school, respectively. The first plot shows that the kid's score has the positive relationship with mom's IQ, as we can see that the increase in mom's IQ results in increasing kid's score. The second graph displays the relationship between kid's score and mom's age. It is interesting to see that not a significant change is observed in kid's score in different ages of mothers. Kid's scores are almost in the same range for mothers with different ages. The last plot shows the relationship between kid's score and mom's high school completion. It suggests that the average kid's score for the group whose moms completed their high school is higher than those kid's whose mothers did not complete the high school.
+```{r echo=FALSE}
+library(tidyverse)
+library(rstan)
+library(tidybayes)
+library(here)
+```
+
+```{r}
+kidiq <- read_rds(here("kidiq.RDS"))
+kidiq
+```
+
+
+
+
+
+```{r echo=FALSE}
+mom_iqplot <- kidiq |> ggplot(aes(x=mom_iq, y=kid_score))+geom_point(col="pink")+geom_smooth(method = 'lm')+labs(x="Mom's IQ",y="Kid's Test Score")
+mom_iqplot
+```
+
+```{r echo=FALSE}
+mom_ageplot <- kidiq |> ggplot(aes(x=mom_age, y=kid_score))+geom_point(col="pink")+labs(x="Mom's Age",y="Kid's Test Score")
+mom_ageplot
+```
+
+```{r echo=FALSE}
+boxplot(kidiq[kidiq$mom_hs == 1, ]$kid_score,
+        kidiq[kidiq$mom_hs == 0, ]$kid_score,
+        names = c("Yes", "No"),
+        xlab = "Whether or not the mother completed high school", ylab = "Kid's Test Score")
+```
+
+## Estimating mean, no covariates
+
+```{r echo=FALSE}
+y <- kidiq$kid_score
+mu0 <- 80
+sigma0 <- 10
+data <- list(y = y, 
+             N = length(y), 
+             mu0 = mu0,
+             sigma0 = sigma0)
+```
+
+```{r include=FALSE}
+fit <- stan(file = here("kids2.stan"),
+            data = data,
+            chains = 3,
+            iter = 500)
+```
+
+here is the summary:
+```{r echo=TRUE}
+fit
+```
+
+Traceplot:
+
+```{r echo=TRUE}
+traceplot(fit)
+```
+
+```{r echo=TRUE}
+pairs(fit, pars = c("mu", "sigma"))
+```
+
+```{r echo=FALSE}
+stan_dens(fit, separate_chains = TRUE)
+```
+
+## Understanding output
+Samples from the posteriors:
+```{r}
+post_samples <- rstan::extract(fit)
+head(post_samples[["mu"]])
+```
+Histogram of mu:
+```{r}
+hist(post_samples[["mu"]])
+```
+
+```{r}
+median(post_samples[["mu"]])
+```
+
+```{r}
+quantile(post_samples[["mu"]], 0.025)
+```
+
+```{r}
+quantile(post_samples[["mu"]], 0.975)
+```
+
+## Plot estimates
+
+Get the posterior samples for mu and sigma in long format:
+
+```{r}
+library(tidybayes)
+dsamples <- fit  |> 
+  gather_draws(mu, sigma) # gather = long format
+dsamples
+```
+
+```{r}
+# wide format
+fit  |>  spread_draws(mu, sigma)
+```
+
+```{r}
+# quickly calculate the quantiles using 
+dsamples |> 
+  median_qi(.width = 0.8)
+```
+
+Let's plot the density of the posterior samples for mu and add in the prior distribution:
+
+```{r echo=FALSE}
+dsamples |> 
+  filter(.variable == "mu") |> 
+  ggplot(aes(.value, color = "posterior")) + geom_density(size = 1) + 
+  xlim(c(70, 100)) + 
+  stat_function(fun = dnorm, 
+        args = list(mean = mu0, 
+                    sd = sigma0), 
+        aes(colour = 'prior'), size = 1) +
+  scale_color_manual(name = "", values = c("prior" = "red", "posterior" = "black")) + 
+  ggtitle("Prior and posterior for mean test scores") + 
+  xlab("score")
+  
+```
+
+# Question 2
+In the model with more informative prior, mu estimate and it's standard error has decreased. However, it shows a slight increase in the sigma value in the more informative model.
+```{r include=FALSE}
+y <- kidiq$kid_score
+mu0 <- 80
+sigma0 <- 0.1
+data <- list(
+  y = y,
+  N = length(y),
+  mu0 = mu0,
+  sigma0 = sigma0
+)
+fit_inform <- stan(file = "kids2.stan",
+            data = data,
+            chains = 3,
+            iter = 500)
+```
+
+```{r echo=TRUE}
+fit_inform
+```
+  
+  
+Plotting the prior and posterior densities:  
+```{r echo=FALSE}
+dsamples <-fit_inform  |> 
+  gather_draws(mu, sigma)
+dsamples |> 
+  filter(.variable == "mu") |> 
+  ggplot(aes(.value, color = "posterior")) + geom_density(size = 1) + 
+  xlim(c(79, 81)) + 
+  stat_function(fun = dnorm, 
+        args = list(mean = mu0, 
+                    sd = sigma0), 
+        aes(colour = 'prior'), size = 1) +
+  scale_color_manual(name = "", values = c("prior" = "red", "posterior" = "black")) + 
+  ggtitle("Prior and posterior for mean test scores") + 
+  xlab("score")
+
+```
+
+## Adding Covariates
+
+```{r include=FALSE}
+X <- as.matrix(kidiq$mom_hs, ncol = 1) 
+K <- 1
+data <- list(y = y, N = length(y), 
+             X =X, K = K)
+fit2 <- stan(file = here("kids3.stan"),
+            data = data, 
+            iter = 1000)
+```
+
+```{r}
+fit2
+```
+
+# Question 3
+
+* __(a)__ As we can see in the following summaries which are related to lm model and model fit2, the estimates are very close to each other.
+```{r}
+model_lm <- lm(kid_score~mom_hs, data=kidiq)
+summary(model_lm)$`coefficient`
+```
+
+```{r}
+summary(fit2)$summary[c("alpha", "beta[1]"), ]
+```
+* __(b)__ As the figure shows, the slope variation includes the opposite variation of the intercept. Thus, the intercept interpretation and sampling would be harder.
+
+```{r}
+pairs(fit2, pars = c("alpha", "beta[1]"))
+```
+
+## Plotting the results
+```{r echo=FALSE}
+fit2 |>
+  spread_draws(alpha, beta[k], sigma) |> 
+     mutate(nhs = alpha, # no high school is just the intercept
+          hs = alpha + beta) |> 
+  select(nhs, hs) |> 
+  pivot_longer(nhs:hs, names_to = "education", values_to = "estimated_score") |> 
+  ggplot(aes(y = education, x = estimated_score)) +
+  stat_halfeye() + 
+  theme_bw() + 
+  ggtitle("Posterior estimates of scores by education level of mother")
+  
+```
+
+# Question 4
+```{r include=FALSE}
+X <- as.matrix(cbind(kidiq$mom_hs, kidiq$mom_iq-mean(kidiq$mom_iq)), ncol = 2) 
+K <- 2
+data <- list(y = y, N = length(y), 
+             X =X, K = K)
+fit3 <- stan(file = "kids3.stan",
+            data = data, 
+            iter = 1000)
+```
+
+```{r}
+fit3
+```
+For a given mother's high school completion, one unit increase of mom's IQ, results in the posterior mean of the kid's score to increase by 0.57.
+
+# Question 5
+As we can see the estimates of two models are comparable.
+```{r}
+momiq_2 <- kidiq$mom_iq-mean(kidiq$mom_iq)
+model2_lm <- lm(kid_score~mom_hs+momiq_2, data=kidiq)
+summary(model2_lm)$`coefficient`
+```
+
+# Question 6
+```{r}
+data <- as.data.frame(fit3 %>% spread_draws(alpha, beta[condition], sigma))
+data %>%
+  reshape(
+    idvar = c(".iteration", ".draw", ".chain"),
+    timevar = "condition", v.names = "beta", direction = "wide"
+  ) %>% mutate(nhs = alpha + beta.2 * 10, hs = alpha + beta.1 + beta.2 * 10) %>%
+  pivot_longer(nhs:hs, names_to = "education", values_to = "estimated_score") %>%
+  ggplot(aes(y = education, x = estimated_score)) +
+  stat_halfeye() +
+  theme_bw() +
+  ggtitle("Posterior estimates of scores by education level of mother")
+```
+
+# Question 7
+
+```{r}
+postsample <- rstan ::extract(fit3) 
+alpha <- postsample[["alpha"]]
+beta1 <-postsample[["beta"]][,1]
+beta2 <- postsample[["beta"]][,2]
+x_new_2 <- 95-mean(kidiq$mom_iq)
+lin_pred <- alpha + beta1*1+beta2*-5
+sigma <- postsample[["sigma"]]
+y_new <- rnorm(n= length(sigma),mean = lin_pred, sd=sigma)
+hist(y_new, xlab = "Kid's Score", main="Posterior Predictive Distribution", col="pink")
+```
+
+
+
