@@ -247,7 +247,7 @@ fit3 <- stan(file = "kids3.stan",
 ```{r}
 fit3
 ```
-For a given mother's high school completion, one unit increase of mom's IQ, results in the posterior mean of the kid's score to increase by 0.57.
+For a given mother's high school completion, one unit increase in centered mom's IQ score, results in the posterior mean of the kid's score to increase by 0.57.
 
 # Question 5
 As we can see the estimates of two models are comparable.
