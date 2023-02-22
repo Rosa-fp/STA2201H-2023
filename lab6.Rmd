@@ -1,0 +1,290 @@
+---
+title: "__Lab Week 6__"
+author: "**Rosa Fallahpour**"
+output:
+  pdf_document: default
+  html_document: default
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+```
+
+
+```{r}
+library(tidyverse)
+library(here)
+library(rstan)
+library(bayesplot) 
+library(loo) 
+library(tidybayes) 
+```
+
+```{r}
+ds <- read_rds(here("births_2017_sample.RDS"))
+head(ds)
+```
+
+```{r}
+ds <- ds %>% 
+  dplyr::rename(birthweight = dbwt, gest = combgest) %>% 
+  mutate(preterm = ifelse(gest<32, "Y", "N")) %>% 
+  filter(ilive=="Y",gest< 99, birthweight<9.999)
+head(ds)
+```
+
+# Question 1 
+The following plot displays the relationship between log birth weight and log gestational age for both genders. As we can see there is a positive relationship between these two variables. As the gestational age increases, the birth weight also increases. It also shows the similar behavior for both genders. However, we see a higher birth weight for baby boy rather than baby girls in the same gestational age at the early stages. This difference decreases as the gestational age increases.
+```{r}
+p1 <- ds |> ggplot(aes(x=log(gest), y=log(birthweight), color=sex))+geom_point()+geom_smooth(method = lm)
+p1
+```
+Below represents the graph for relation between log birth weight and the gestational age considering two groups whether gestational age is at least 32 weeks or not. As we can see there is a positive relationship between birth weight and gestational age for both categories. It should be noted that the relationship between these two variables is much stronger for the group with gestational age less than 32 weeks than group with greater than 32 weeks.
+```{r}
+p2 <- ds |> ggplot(aes(x=log(gest), y=log(birthweight), color=preterm))+geom_point()+geom_smooth(method = lm)
+p2
+```
+The following plot represents the relationship between birth weight and mom's age. It is interesting to see that the birth weight for different mom's ages is in an almost similar range.
+```{r}
+p3 <- ds |> ggplot(aes(x=birthweight, y=mager))+labs(y="mom's age")+geom_point()
+p3
+```
+
+# Question 2
+The following graph represents the distribution of simulated (log) birth weights:
+```{r echo=TRUE}
+y <- c()
+for(i in 1:1000){
+  beta1 <- rnorm(1, 0,1)
+  beta2 <- rnorm(1, 0,1)
+  sigma <- abs(rnorm(1, 0,1))
+  gest_cs <- (log(ds$gest)-mean(log(ds$gest)))/sd(log(ds$gest))
+  mu <- beta1 + beta2 *gest_cs
+  yi <- rnorm(length(mu), mean = mu, sd = sigma)
+  y <- c(y, yi)
+}
+```
+
+```{r echo=TRUE}
+plot(density(y[1:3842]), xlim=c(-4,5),ylim=c(0,15), main = "Distribution of log(birthweight) \n (1000 simulations)")
+for(i in 1:999){
+    lines(density(y[(i*3842+1):((i+1)*3842)]))
+}
+```
+
+Plot shown below is ten simulations of (log) birthweight against gestational age:
+
+```{r echo=TRUE}
+y <- c()
+for(i in 1:10){
+  beta1 <- rnorm(1, 0,1)
+  beta2 <- rnorm(1, 0,1)
+  sigma <- abs(rnorm(1, 0,1))
+  gest_cs1 <- (log(ds$gest)-mean(log(ds$gest)))/sd(log(ds$gest))
+  mu <- beta1 + beta2 *gest_cs1
+  yi <- rnorm(length(mu), mean = mu, sd = sigma)
+  y <- c(y, yi)
+}
+```
+
+```{r echo=TRUE}
+plot(y[1:3842], gest_cs1[1:3842],xlab="simulated weight" ,ylab="centered log gestational age",main = "")
+for(i in 1:9){
+    lines(y[(i*3842+1):((i+1)*3842)], gest_cs1[(i*3842+1):((i+1)*3842)])
+}
+```
+
+## Run the model
+```{r}
+ds$log_weight <- log(ds$birthweight)
+ds$log_gest_c <- (log(ds$gest) - mean(log(ds$gest)))/sd(log(ds$gest))
+stan_data <- list(N = nrow(ds),
+                  log_weight = ds$log_weight,
+                  log_gest = ds$log_gest_c)
+```
+
+```{r include=FALSE}
+mod1 <- stan(data = stan_data, 
+             file = here("simple_weight.stan"),
+             iter = 500,
+             seed = 243)
+```
+We fit model 1, below is the summary:
+```{r}
+summary(mod1)$summary[c("beta[1]", "beta[2]", "sigma"),]
+```
+
+# Question 3
+An estimate of the expected birthweight of a baby who was born at a gestational age of 37 weeks is as below:
+```{r}
+x_new <- (log(37) - mean(log(ds$gest)))/sd(log(ds$gest))
+postsample <- rstan ::extract(mod1)
+beta1_hat <- median(postsample[["beta"]][,1])
+beta2_hat <- median(postsample[["beta"]][,2])
+exp(beta1_hat+beta2_hat*x_new)
+```
+
+# Question 4
+The summary of model 2 is as below:
+```{r echo=TRUE}
+ds$z <- ifelse(ds$preterm == "Y", 1, 0)
+ds$z_log_gest <- ds$z * ds$log_gest_c
+stan_data_2 <- list(N = nrow(ds),
+                  log_weight = ds$log_weight,
+                  log_gest = ds$log_gest_c,
+                  z = ds$z,
+                  z_log_gest = ds$z_log_gest)
+```
+
+```{r include=FALSE}
+my_mod_2 <- stan(data = stan_data_2, 
+             file = here("interaction_weight.stan"),
+             iter = 500,
+             seed = 243)
+```
+
+```{r}
+summary(my_mod_2)$summary[c("beta[1]", "beta[2]", "beta[3]", "beta[4]", "sigma"),]
+```
+# Question 5
+The comparison between reference model and my model shows that beta2 and beta3 has switched their values. Otherwise, the results are very close.
+```{r}
+load(here("mod2.Rda"))
+summary(mod2)$summary[c(paste0("beta[", 1:4, "]"), "sigma"),]
+```
+
+## PPCs
+The distribution of data (y) against 100 different datasets drawn from the posterior predictive distribution:
+```{r}
+set.seed(1856)
+y <- ds$log_weight
+yrep1 <- extract(mod1)[["log_weight_rep"]]
+dim(yrep1)
+samp100 <- sample(nrow(yrep1), 100)
+ppc_dens_overlay(y, yrep1[samp100, ])  + ggtitle("distribution of observed versus predicted birthweights")
+```
+
+# Question 6
+```{r}
+y <- ds$log_weight
+yrep2 <- extract(mod2)[["log_weight_rep"]]
+samp2 <- yrep2[sample(nrow(yrep2), 100),]
+df <- data.frame(rbind(samp2, y))
+df$index <- 1:nrow(df)
+df$type <- c(rep("rep",100), "y")
+df <- df %>% gather(key = "key", value = "value", X1:X3842)
+df %>% ggplot(aes(x=value, group=index, color = type)) + geom_density() + theme(legend.title=element_blank())+xlab("")+ggtitle("distribution of observed versus predicted birthweights (model 2)")
+```
+
+## Test statistics
+Medians by prematurity for Model 1:
+```{r}
+ppc_stat_grouped(ds$log_weight, yrep1, group = ds$preterm, stat = 'median')
+```
+
+# Question 7
+
+We calculate the test statistic for the data, and the posterior predictive samples for both models, and plot the comparisons as below:
+```{r}
+tstat.data <- sum(y < log(2.5))/ length(y)
+tstat.mod1 <- c()
+tstat.mod2 <- c()
+for (i in 1:500) {
+  tstat.mod1 <- c(tstat.mod1, sum(yrep1[i,]<log(2.5))/length(yrep1[i,]))
+  tstat.mod2 <- c(tstat.mod2, sum(yrep2[i,]<log(2.5))/length(yrep2[i,]))
+}
+hist(tstat.mod1, xlim = c(0.05, 0.15), main = "Model 1", xlab = "prop < log(2.5) in y rep")
+abline(v = tstat.data, col= "orange")
+legend(0.125, 50, legend = "observed T", col = "orange", lty=1)
+
+hist(tstat.mod2, xlim = c(0.05, 0.15), main = "Model 2", xlab = "prop < log(2.5) in y rep")
+abline(v = tstat.data, col = "orange")
+legend(0.125, 50, legend = "observed T", col = "orange", lty=1)
+```
+
+## LOO
+Finally let's calculate the LOO elpd for each model and compare. The first step of this is to get the point-wise log likelihood estimates from each model:
+
+```{r include=FALSE}
+loglik1 <- extract(mod1)[["log_lik"]]
+loglik2 <- extract(mod2)[["log_lik"]]
+```
+
+```{r}
+loo1 <- loo(loglik1, save_psis = TRUE)
+loo2 <- loo(loglik2, save_psis = TRUE)
+```
+
+```{r}
+loo1
+loo2
+```
+
+Comparing the two models tells us Model 2 is better:
+
+```{r}
+loo_compare(loo1, loo2)
+```
+
+
+We can also compare the LOO-PIT of each of the models to standard uniforms. The both do pretty well. 
+
+```{r}
+ppc_loo_pit_overlay(yrep = yrep1, y = y, lw = weights(loo1$psis_object))
+ppc_loo_pit_overlay(yrep = yrep2, y = y, lw = weights(loo2$psis_object))
+```
+
+# Question 8
+I will add the sex variable to model one and then make a comparison with model 2. Results suggest that model 2 performs better.
+
+```{r echo=TRUE}
+ds$s <- ifelse(ds$sex == "M", 1, 0)
+stan_data_3 <- list(N = nrow(ds),
+                  log_weight = ds$log_weight,
+                  log_gest = ds$log_gest_c,
+                  s = ds$s)
+```
+
+```{r include=FALSE}
+my_mod_3 <- stan(data = stan_data_3, 
+             file = here("mod3.stan"),
+             iter = 500,
+             seed = 243)
+```
+
+```{r}
+summary(my_mod_3)$summary[c(paste0("beta[", 1:3, "]"), "sigma"),]
+```
+
+
+```{r}
+yrep3 <- extract(my_mod_3)[["log_weight_rep"]] 
+```
+Plot shown below is related to model 3:
+```{r}
+samp100 <- sample(nrow(yrep3), 100)
+ppc_dens_overlay(y, yrep3[samp100, ])  + ggtitle("distribution of observed versus predicted birthweights (model 3)")
+```
+Let's do for model 2:
+```{r}
+samp100 <- sample(nrow(yrep2), 100)
+ppc_dens_overlay(y, yrep2[samp100, ])  + ggtitle("distribution of observed versus predicted birthweights (model 2)")
+```
+let's do another comparison between model 2 and model 3:
+```{r}
+loglik3 <- extract(my_mod_3)[["log_lik"]]
+loo3 <- loo(loglik3, save_psis = TRUE)
+loo_compare(loo2, loo3)
+```
+
+Now we carry out a test statistic of the proportion of births under 2.5kg. We calculate the test statistic for the data, and the posterior predictive samples for model 3, and plot the comparison. 
+```{r}
+tstat.data <- sum(y < log(2.5))/ length(y)
+tstat.mod3 <- c()
+for (i in 1:500) {
+  tstat.mod3 <- c(tstat.mod3, sum(yrep3[i,]<log(2.5))/length(yrep3[i,]))
+}
+hist(tstat.mod3, xlim = c(0.05, 0.15), main = "Model 3", xlab = "prop < log(2.5) in y rep")
+abline(v = tstat.data, col= "orange")
+legend(0.125, 50, legend = "observed T", col = "orange", lty=1)
+```
+
