@@ -1,0 +1,131 @@
+---
+title: "__Lab Week 11__"
+author: "**Rosa Fallahpour**"
+output:
+  pdf_document: default
+  html_document: default
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+```
+
+```{r include=FALSE}
+library(tidyverse)
+library(here)
+library(rstan)
+library(tidybayes)
+source(here("getsplines.R"))
+```
+
+```{r}
+d <- read.csv("https://raw.githubusercontent.com/MJAlexander/applied-stats-2023/main/data/fc_entries.csv")
+```
+## Question 1
+The following graph illustrates varying trends across different states. In some states, we observe an increasing trend, while others show a decreasing trend. Additionally, certain states display no general pattern, exhibiting fluctuations instead.
+```{r}
+library(geofacet)
+library(ggplot2)
+d |> 
+  ggplot(aes(year, ent_pc)) + 
+  geom_line()+
+  facet_geo(~state, scales = "free_y")
+```
+
+## Question 2
+The model we want to fit is as below. Where $y_{s,t}$ is the logged entries per capita for state $s$ in year $t$.
+$$
+\begin{aligned}
+y_{st} &\sim N(\log \lambda_{st}, \sigma^2_{y,s})\\
+\log \lambda_{st} &= \alpha_kB_k(t)\\
+\Delta^2\alpha_k &\sim N(0, \sigma^2_{\alpha,s})\\
+\log \sigma_{\alpha,s} &\sim N(\mu_{\sigma}, \tau^2)
+\end{aligned}
+$$
+```{r}
+years <- unique(d$year)
+N <- length(years)
+y <- log(d |> 
+  dplyr::select(state, year, ent_pc) |> 
+  pivot_wider(names_from = "state", values_from = "ent_pc") |> 
+  select(-year) |> 
+  as.matrix())
+res <- getsplines(years, 2.5)
+B <- res$B.ik
+K <- ncol(B)
+stan_data <- list(N = N, y = y, K = K, S = length(unique(d$state)),
+                  B = B)
+mod <- stan(data = stan_data, file = here("lab11.stan"))
+```
+
+## Question 3
+The plots below display the projected entries per capita up to 2030 for four selected states:
+
+```{r echo=TRUE}
+states <- unique(d$state)
+proj_years <- 2018:2030
+B.ik_full <- getsplines(c(years, proj_years), 2.5)$B.ik
+K <- ncol(B) # number of knots in sample
+K_full <- ncol(B.ik_full) # number of knots over entire
+# get your posterior samples
+alphas <- extract(mod)[["alpha"]]
+sigmas <- extract(mod)[["sigma_alpha"]] # sigma_alpha
+sigma_ys <- extract(mod)[["sigma_y"]]
+nsims <- nrow(alphas)
+proj_steps <- K_full - K # number of projection steps
+# first, project the alphas
+alphas_proj <- array(NA, c(nsims, proj_steps, length(states)))
+set.seed(1098)
+# project the alphas
+for(j in 1:length(states)){
+first_next_alpha <- rnorm(n = nsims,
+mean = 2*alphas[,K,j] - alphas[,K-1,j],
+sd = sigmas[,j])
+second_next_alpha <- rnorm(n = nsims,
+mean = 2*first_next_alpha - alphas[,K,j],
+sd = sigmas[,j])
+alphas_proj[,1,j] <- first_next_alpha
+alphas_proj[,2,j] <- second_next_alpha
+# now project the rest
+for(i in 3:proj_steps){ #!!! not over years but over knots
+alphas_proj[,i,j] <- rnorm(n = nsims,
+mean = 2*alphas_proj[,i-1,j] - alphas_proj[,i-2,j],
+sd = sigmas[,j])
+}
+}
+# now use these to get y's
+y_proj <- array(NA, c(nsims, length(proj_years), length(states)))
+for(i in 1:length(proj_years)){ # now over years
+for(j in 1:length(states)){
+all_alphas <- cbind(alphas[,,j], alphas_proj[,,j] )
+this_lambda <- all_alphas %*% as.matrix(B.ik_full[length(years)+i, ])
+y_proj[,i,j] <- rnorm(n = nsims, mean = this_lambda, sd = sigma_ys[,j])
+}
+}
+```
+
+```{r}
+states_s <- c(1, 2, 3, 4) 
+y_proj_s <- y_proj[,,states_s]
+y_proj_mean <- apply(y_proj_s, c(2, 3), mean)
+y_proj_lower <- apply(y_proj_s, c(2, 3), function(x) quantile(x, 0.025))
+y_proj_upper <- apply(y_proj_s, c(2, 3), function(x) quantile(x, 0.975))
+state_names <- unique(d$state)[states_s]
+df <- data.frame(
+  year = rep(proj_years, length(states_s)),
+  mean = as.vector(y_proj_mean),
+  lower = as.vector(y_proj_lower),
+  upper = as.vector(y_proj_upper),
+  state = rep(state_names, each = length(proj_years))
+)
+ggplot(df, aes(x = year, y = mean, group = state, color = state)) +
+  geom_line() +
+  geom_ribbon(aes(ymin = lower, ymax = upper, fill = state), alpha = 0.2) +
+  labs(title = "Projected Entries per Capita to 2030",
+       x = "Years projected",
+       y = "entries per capita") +
+  theme_minimal() +
+  facet_wrap(~state, ncol = length(states_s)) +
+  scale_x_continuous(breaks = seq(min(proj_years), max(proj_years), by = 5))
+```
+
+
